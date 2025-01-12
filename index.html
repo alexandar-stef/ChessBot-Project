@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Web Chess Game with Stockfish</title>
+    <style>
+        body {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background-color: #f4f4f4;
+        }
+
+        #chessboard {
+            display: grid;
+            grid-template-columns: repeat(8, 60px);
+            grid-template-rows: repeat(8, 60px);
+            border: 2px solid #333;
+            margin-bottom: 20px;
+        }
+
+        .square {
+            width: 60px;
+            height: 60px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .light {
+            background-color: #eee;
+        }
+
+        .dark {
+            background-color: #777;
+        }
+
+        .piece img {
+            width: 50px;
+            height: 50px;
+            cursor: grab;
+        }
+
+        #status {
+            font-size: 20px;
+            font-weight: bold;
+            color: #333;
+        }
+    </style>
+</head>
+<body>
+    <div id="chessboard"></div>
+    <div id="status">White to move</div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+
+    <script>
+        const chess = new Chess(); // Chess.js instance
+        const board = document.getElementById('chessboard');
+        const status = document.getElementById('status'); // Status display element
+        const stockfish = new Worker("stockfish.js"); // Stockfish Web Worker
+
+        const pieces = {
+            p: 'images/black_pawn.png',
+            r: 'images/black_rook.png',
+            n: 'images/black_knight.png',
+            b: 'images/black_bishop.png',
+            q: 'images/black_queen.png',
+            k: 'images/black_king.png',
+            P: 'images/white_pawn.png',
+            R: 'images/white_rook.png',
+            N: 'images/white_knight.png',
+            B: 'images/white_bishop.png',
+            Q: 'images/white_queen.png',
+            K: 'images/white_king.png',
+        };
+
+        let draggedPiece = null;
+        let fromSquare = null;
+
+        stockfish.postMessage("uci"); // Initialize Stockfish
+
+        function renderBoard() {
+            board.innerHTML = ''; // Clear board before rendering
+            const boardState = chess.board(); // Get board state
+
+            for (let row = 0; row < 8; row++) {
+                for (let col = 0; col < 8; col++) {
+                    const squareColor = (row + col) % 2 === 0 ? 'light' : 'dark';
+                    const squareDiv = document.createElement('div');
+                    squareDiv.classList.add('square', squareColor);
+                    squareDiv.dataset.square = `${'abcdefgh'[col]}${8 - row}`; // Square notation
+
+                    const piece = boardState[row][col];
+                    if (piece) {
+                        const pieceImage = document.createElement('img');
+                        pieceImage.src = pieces[piece.color === 'w' ? piece.type.toUpperCase() : piece.type.toLowerCase()];
+                        pieceImage.alt = `${piece.color === 'w' ? 'White' : 'Black'} ${piece.type}`;
+                        pieceImage.dataset.square = `${'abcdefgh'[col]}${8 - row}`;
+                        pieceImage.setAttribute('draggable', true);
+                        squareDiv.appendChild(pieceImage);
+                    }
+
+                    board.appendChild(squareDiv);
+                }
+            }
+
+            updateStatus(); // Update status after rendering
+        }
+
+        function updateStatus() {
+            if (chess.in_checkmate()) {
+                status.textContent = chess.turn() === 'w' ? 'Black wins by checkmate!' : 'White wins by checkmate!';
+                alert(status.textContent); // Optional: Display as alert
+            } else if (chess.in_stalemate()) {
+                status.textContent = "Stalemate! It's a draw.";
+                alert(status.textContent); // Optional: Display as alert
+            } else if (chess.in_check()) {
+                status.textContent = chess.turn() === 'w' ? 'White is in check!' : 'Black is in check!';
+            } else {
+                status.textContent = chess.turn() === 'w' ? 'White to move' : 'Black to move';
+            }
+        }
+
+        function aiMove() {
+            if (chess.turn() === 'b') {
+                const fen = chess.fen();
+                stockfish.postMessage(`position fen ${fen}`);
+                stockfish.postMessage("go depth 15"); // Adjust depth to control difficulty
+
+                stockfish.onmessage = (event) => {
+                    const data = event.data;
+                    if (data.startsWith("bestmove")) {
+                        const bestMove = data.split(" ")[1];
+                        if (bestMove) {
+                            chess.move({ from: bestMove.slice(0, 2), to: bestMove.slice(2, 4) });
+                            renderBoard();
+                        }
+                    }
+                };
+            }
+        }
+
+        board.addEventListener('dragstart', (e) => {
+            if (e.target.tagName === 'IMG' && e.target.dataset.square) {
+                draggedPiece = e.target;
+                fromSquare = e.target.dataset.square;
+                e.dataTransfer.setData('text/plain', fromSquare);
+                console.log('Drag Start:', fromSquare);
+            }
+        });
+
+        board.addEventListener('dragover', (e) => {
+            e.preventDefault(); // Allow drop
+        });
+
+        board.addEventListener('drop', (e) => {
+            e.preventDefault();
+            const target = e.target.closest('.square');
+            const toSquare = target ? target.dataset.square : null;
+
+            console.log('Drop Event:', { fromSquare, toSquare });
+
+            if (draggedPiece && fromSquare && toSquare) {
+                const move = chess.move({ from: fromSquare, to: toSquare });
+
+                if (move) {
+                    console.log('Move Success:', move);
+                    renderBoard();
+                    setTimeout(aiMove, 500); // Let Stockfish play after player's move
+                } else {
+                    console.log('Invalid Move');
+                    alert('Invalid move');
+                }
+            }
+
+            draggedPiece = null;
+            fromSquare = null;
+        });
+
+        // Initial board rendering
+        renderBoard();
+    </script>
+</body>
+</html>
